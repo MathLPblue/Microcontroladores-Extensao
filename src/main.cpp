@@ -5,11 +5,16 @@
 #define SS_PIN 10
 #define RST_PIN 9
 #define SERVO_PIN 6
-// houveram mudanças, vamos trocar para o arduino 
+
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 Servo servo;
 
 String lastUid = "";
+
+
+bool servoAberto = false;
+unsigned long servoTimer = 0;
+const unsigned long tempoAberto = 2000; 
 
 void setup() {
   Serial.begin(115200);
@@ -20,6 +25,11 @@ void setup() {
 }
 
 void loop() {
+  if (servoAberto && (millis() - servoTimer >= tempoAberto)) {
+    servo.write(0);  
+    servoAberto = false;
+  }
+
   if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) {
     return;
   }
@@ -35,7 +45,7 @@ void loop() {
     lastUid = uid;
 
     unsigned long startTime = millis();
-    while (!Serial.available() && millis() - startTime < 3000); 
+    while (!Serial.available() && millis() - startTime < 3000);
 
     if (Serial.available()) {
       String resposta = Serial.readStringUntil('\n');
@@ -43,8 +53,8 @@ void loop() {
 
       if (resposta == "LIBERADO") {
         servo.write(90); 
-        delay(2000);
-        servo.write(0);  
+        servoAberto = true;
+        servoTimer = millis();
       }
     }
   }
