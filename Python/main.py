@@ -1,113 +1,88 @@
-import dataset
-import tkinter as tk
-from tkinter import messagebox
+import customtkinter as ctk
 import serial
 import threading
-from datetime import datetime
+import dataset
+import time
 
-SERIAL_PORT = "/dev/ttyUSB0"  #  NA HORA DA APRESENTAÇÃO TEM QUE TROCAR PARA COM, SO VAMO VER QUAL É O COM CONECTADO NO PC (JÁ QUE OS DA FACUL É WINDOWS)
+DB_PATH = 'sqlite:///rfid.db'
+SERIAL_PORT = '/dev/ttyUSB0'  # COM3 PELO O AMOR DE DEUS É COM3 NA HORA DE APRESENTAÇÃO !!! 
 BAUD_RATE = 115200
 
-ser = None
+db = dataset.connect(DB_PATH)
+table = db['uids']
 
-db = dataset.connect('sqlite:///uids.db')
+try:
+    arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+except serial.SerialException:
+    arduino = None
 
-uids_table = db['uids']
-access_log_table = db['access_log']  
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
-def connect_serial():
-    global ser
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-        messagebox.showinfo("Conectado", f"Conectado em {SERIAL_PORT}")
-        refresh_listbox()
-        refresh_access_log_listbox()
-    except Exception as e:
-        messagebox.showerror("Erro", f"Não foi possível conectar: {e}")
+class RFIDApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Controle de Acesso RFID")
+        self.geometry("600x400")
 
-def add_uid():
-    uid = uid_entry.get().strip().upper()
-    if len(uid) == 0:
-        messagebox.showwarning("Atenção", "UID vazio")
-        return
+        self.btn_add = ctk.CTkButton(self, text="Adicionar UID", command=self.adicionar_uid)
+        self.btn_add.pack(pady=10)
 
-    if uids_table.find_one(uid=uid):
-        messagebox.showinfo("Info", "UID já cadastrado no banco")
-        return
+        self.btn_del = ctk.CTkButton(self, text="Remover UID", command=self.remover_uid)
+        self.btn_del.pack(pady=10)
 
-    uids_table.insert(dict(uid=uid))
-    messagebox.showinfo("Sucesso", f"UID {uid} cadastrado no banco")
+        self.historico = ctk.CTkTextbox(self, height=250, width=550)
+        self.historico.pack(pady=10)
 
-    if ser and ser.is_open:
-        ser.write(f"ADD {uid}\n".encode())
-    else:
-        messagebox.showwarning("Aviso", "Serial não conectada, UID salvo só no banco")
+        if arduino:
+            self.serial_thread = threading.Thread(target=self.escutar_serial, daemon=True)
+            self.serial_thread.start()
+            self.adicionar_historico("Conectado à porta serial.")
+        else:
+            self.adicionar_historico("Falha ao conectar com a porta serial.")
 
-    refresh_listbox()
+    def adicionar_historico(self, msg):
+        hora = time.strftime("%H:%M:%S")
+        self.historico.insert("end", f"[{hora}] {msg}\n")
+        self.historico.see("end")
 
-def refresh_listbox():
-    listbox.delete(0, tk.END)
-    for row in uids_table.all():
-        listbox.insert(tk.END, row['uid'])
+    def adicionar_uid(self):
+        uid = ctk.CTkInputDialog(title="Adicionar UID", text="Digite o UID:").get_input()
+        if uid:
+            uid = uid.upper().strip()
+            if table.find_one(uid=uid):
+                self.adicionar_historico(f"UID {uid} já cadastrado.")
+            else:
+                table.insert({'uid': uid})
+                self.adicionar_historico(f"UID {uid} adicionado.")
 
-def remove_uid():
-    selected = listbox.curselection()
-    if not selected:
-        messagebox.showwarning("Atenção", "Selecione um UID para remover")
-        return
+    def remover_uid(self):
+        uid = ctk.CTkInputDialog(title="Remover UID", text="Digite o UID:").get_input()
+        if uid:
+            uid = uid.upper().strip()
+            if table.find_one(uid=uid):
+                table.delete(uid=uid)
+                self.adicionar_historico(f"UID {uid} removido.")
+            else:
+                self.adicionar_historico(f"UID {uid} não encontrado.")
 
-    uid = listbox.get(selected[0])
+    def escutar_serial(self):
+        while True:
+            try:
+                linha = arduino.readline().decode("utf-8").strip()
+                if linha.startswith("Cartao detectado UID:"):
+                    uid = linha.split(":")[1].strip().upper()
+                    self.adicionar_historico(f"🎴 Cartão detectado: {uid}")
 
-    uids_table.delete(uid=uid)
+                    autorizado = table.find_one(uid=uid)
+                    resposta = "LIBERADO" if autorizado else "NEGADO"
 
-    messagebox.showinfo("Removido", f"UID {uid} removido do banco")
-    refresh_listbox()
+                    arduino.write((resposta + "\n").encode())
+                    self.adicionar_historico(f"Resposta enviada: {resposta}")
+            except Exception as e:
+                self.adicionar_historico(f"Erro serial: {e}")
+            time.sleep(0.1)
 
-def refresh_access_log_listbox():
-    access_log_listbox.delete(0, tk.END)
-    for row in access_log_table.find(order_by='timestamp desc', _limit=50):  
-        ts = row['timestamp']
-        uid = row['uid']
-        access_log_listbox.insert(tk.END, f"{ts} - {uid}")
-
-def read_from_serial():
-    while True:
-        if ser and ser.is_open:
-            line = ser.readline().decode(errors='ignore').strip()
-            if line:
-                print("ESP32:", line)
-                uid = line.upper()
-                timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                access_log_table.insert(dict(uid=uid, timestamp=timestamp))
-                root.after(0, refresh_access_log_listbox)
-
-root = tk.Tk()
-root.title("Cadastro de UIDs com SQLite")
-
-tk.Label(root, text="UID do cartão:").pack()
-uid_entry = tk.Entry(root, width=40)
-uid_entry.pack()
-
-btn_add = tk.Button(root, text="Cadastrar UID", command=add_uid)
-btn_add.pack(pady=5)
-
-btn_remove = tk.Button(root, text="Remover UID", command=remove_uid)
-btn_remove.pack(pady=5)
-
-btn_connect = tk.Button(root, text="Conectar Serial", command=connect_serial)
-btn_connect.pack(pady=10)
-
-tk.Label(root, text="UIDs cadastrados:").pack()
-listbox = tk.Listbox(root, width=40, height=10)
-listbox.pack(pady=10)
-
-tk.Label(root, text="Histórico de acessos (últimos 50):").pack()
-access_log_listbox = tk.Listbox(root, width=40, height=10)
-access_log_listbox.pack(pady=10)
-
-refresh_listbox()
-refresh_access_log_listbox()
-
-threading.Thread(target=read_from_serial, daemon=True).start()
-
-root.mainloop()
+if __name__ == "__main__":
+    app = RFIDApp()
+    app.mainloop()
