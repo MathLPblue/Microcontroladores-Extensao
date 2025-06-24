@@ -14,7 +14,7 @@ String lastUid = "";
 
 bool servoAberto = false;
 unsigned long servoTimer = 0;
-const unsigned long tempoAberto = 2000; 
+const unsigned long tempoAberto = 6500; 
 
 void setup() {
   Serial.begin(115200);

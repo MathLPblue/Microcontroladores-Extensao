@@ -53,8 +53,10 @@ class RFIDApp(ctk.CTk):
             if table.find_one(uid=uid):
                 self.adicionar_historico(f"UID {uid} já cadastrado.")
             else:
-                table.insert({'uid': uid})
-                self.adicionar_historico(f"UID {uid} adicionado.")
+                nome = ctk.CTkInputDialog(title="Adicionar Nome", text="Digite o Nome:").get_input()
+                nome = nome.strip() if nome else "Sem Nome"
+                table.insert({'uid': uid, 'nome': nome})
+                self.adicionar_historico(f"UID {uid} - {nome} adicionado.")
 
     def remover_uid(self):
         uid = ctk.CTkInputDialog(title="Remover UID", text="Digite o UID:").get_input()
@@ -78,7 +80,11 @@ class RFIDApp(ctk.CTk):
                     resposta = "LIBERADO" if autorizado else "NEGADO"
 
                     arduino.write((resposta + "\n").encode())
-                    self.adicionar_historico(f"Resposta enviada: {resposta}")
+
+                    if autorizado:
+                        self.adicionar_historico(f"Resposta enviada: {resposta} - {autorizado.get('nome', 'Sem Nome')}")
+                    else:
+                        self.adicionar_historico(f"Resposta enviada: {resposta}")
             except Exception as e:
                 self.adicionar_historico(f"Erro serial: {e}")
             time.sleep(0.1)
